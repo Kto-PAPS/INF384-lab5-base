@@ -107,7 +107,7 @@ El viernes 06/11 a las 17:55 se aplicó a producción un cambio en `infra/s3.tf`
   - Checkov sobre `infra/` en el repositorio base: 48 controles evaluados, 20 aprobados y 28 fallidos. Los cinco que bloquean son exactamente los que causaron el incidente: `aws_s3_bucket_public_access_block.comprobantes` (CKV_AWS_53, 54, 55, 56) y `aws_s3_bucket_policy.conciliacion` con `Principal = "*"` (CKV_AWS_70), ambos en `infra/s3.tf` desde el commit `bd600fe`.
   - Trivy sobre `package-lock.json` en el repositorio base: 3 vulnerabilidades HIGH y 0 CRITICAL. Son CVE-2024-29415 en `ip@2.0.1`, y CVE-2021-23337 y CVE-2026-4800 en `lodash@4.17.20`. Run: https://github.com/Kto-PAPS/INF384-lab5-base/actions/runs/43315459013
 - Alternativa descartada y por qué: bloquear los 28 hallazgos de Checkov. La descartamos porque la mayoría son controles de endurecimiento (cifrado KMS, X-Ray, DLQ, replicación) que no causaron el incidente. Bloquearlos todos dejaría el pipeline en rojo de forma permanente, y el equipo terminaría ignorando el gate o desactivándolo.
-- Posición en minoría: _Pendiente: objeción de Darwin Caceres (abogado del diablo)._
+- Posición en minoría (abogado del diablo): dejar checks como informativos normaliza ignorar alertas. Los atacantes reales no dependen de un solo fallo crítico: encadenan errores medios y bajos (por ejemplo, sin logs y sin cifrado), que con esta política el pipeline dejaría pasar.
 
 ### Decisión 2 · La vulnerabilidad sin versión corregida
 
@@ -118,7 +118,7 @@ El viernes 06/11 a las 17:55 se aplicó a producción un cambio en `infra/s3.tf`
   - El reemplazo está en `main` (PR #6, `fix/dependencias`), con 16 pruebas en verde en el job `unit`.
 - Alternativa descartada y por qué: mantener `ip@2.0.1` con una excepción en `.trivyignore`, o bloquear los despliegues hasta que exista una versión corregida. Descartamos la excepción porque no tiene fecha de salida (no hay parche anunciado) y deja abierto el riesgo de SSRF en la validación de URLs de comercios. Descartamos bloquear porque detendría todos los despliegues por tiempo indefinido, cuando el reemplazo con una API nativa es pequeño y se puede probar.
 - Riesgo residual reconocido: la validación revisa la IP literal de la URL, pero no resuelve DNS ni sigue redirecciones. Un dominio público que resuelva a una IP interna, o una redirección hacia una, no quedan cubiertos.
-- Posición en minoría: _Pendiente: objeción de Darwin Caceres (abogado del diablo)._
+- Posición en minoría (abogado del diablo): `net.BlockList` bloquea IPs directas, pero si la app no valida a qué IP resuelve un dominio después de una redirección, seguimos siendo vulnerables a SSRF por DNS rebinding. Reemplazar la librería no basta por sí solo.
 
 ### Decisión 3 · La Function URL sin autenticación
 
@@ -129,7 +129,7 @@ El viernes 06/11 a las 17:55 se aplicó a producción un cambio en `infra/s3.tf`
   - Riesgo aceptado: quien invoque la URL directamente puede llamar a `/saldo`, `/historial` y `/transferir` sin autorización, porque el handler no valida tokens.
 - Dato del repositorio que la sustenta: CKV_AWS_258 ("Lambda function URLs AuthType is not None"), recurso `aws_lambda_function_url.api` en `infra/lambda.tf`, con `authorization_type = "NONE"` (líneas 28–38 en `main`).
 - Alternativa descartada y por qué: cambiar de inmediato a `authorization_type = "AWS_IAM"` sin adaptar el mecanismo de acceso de la app. La descartamos porque la app móvil dejaría de funcionar para todos los usuarios: necesitaría firmar las solicitudes con SigV4 y obtener credenciales (por ejemplo, con Cognito), y ese cambio no se puede hacer ni probar desde este repositorio antes del vencimiento.
-- Posición en minoría: _Pendiente: objeción de Darwin Caceres (abogado del diablo)._
+- Posición en minoría (abogado del diablo): el límite de 10 ejecuciones concurrentes evita facturas gigantes de AWS, pero facilita una denegación de servicio (DoS). A un atacante le basta enviar 10 peticiones simultáneas para saturar la Lambda y tumbar todas las notificaciones legítimas.
 
 ## A3 · Dato nuevo
 
@@ -152,9 +152,14 @@ Dato recibido el 12/11 a las 16:40: el proveedor de conciliación exige acceso h
 
 | Evidencia | Link |
 |---|---|
-| Run fallido: el gate detiene el bucket público | |
-| Run en verde en `main` después de las correcciones | |
-| Pull requests del equipo | |
+| Run fallido: el gate detiene el bucket público | Checkov (job `iac`): <https://github.com/Kto-PAPS/INF384-lab5-base/actions/runs/43310141946> |
+| Run fallido: Trivy detiene las dependencias vulnerables | Trivy (job `sca`): <https://github.com/Kto-PAPS/INF384-lab5-base/actions/runs/43315459013> |
+| Run en verde en `main` después de las correcciones | _Pendiente: run definitivo de `main` tras fusionar el PR #5._ |
+| Pull requests del equipo | <https://github.com/Kto-PAPS/INF384-lab5-base/pulls?q=is%3Apr> |
+
+### Observación pendiente
+
+SonarQube Cloud reportó **Security Rating C** en el código nuevo del PR #5. Queda registrado como observación pendiente, a revisar después del laboratorio: SonarQube no forma parte de los tres jobs obligatorios del pipeline (`unit`, `iac` y `sca`) y no cambia la política de bloqueo de la Decisión 1.
 
 ## Declaración de uso de IA
 
