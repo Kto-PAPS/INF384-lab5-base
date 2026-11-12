@@ -154,7 +154,7 @@ Dato recibido el 12/11 a las 16:40: el proveedor de conciliación exige acceso h
 |---|---|
 | Run fallido: el gate detiene el bucket público | Checkov (job `iac`): <https://github.com/Kto-PAPS/INF384-lab5-base/actions/runs/43310141946> |
 | Run fallido: Trivy detiene las dependencias vulnerables | Trivy (job `sca`): <https://github.com/Kto-PAPS/INF384-lab5-base/actions/runs/43315459013> |
-| Run en verde en `main` después de las correcciones | _Pendiente: run definitivo de `main` tras fusionar el PR #5._ |
+| Run en verde en `main` después de las correcciones | Jobs `unit`, `iac` y `sca` en verde: <https://github.com/Kto-PAPS/INF384-lab5-base/actions/runs/43317677015> |
 | Pull requests del equipo | <https://github.com/Kto-PAPS/INF384-lab5-base/pulls?q=is%3Apr> |
 
 ### Observación pendiente
