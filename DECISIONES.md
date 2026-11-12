@@ -101,23 +101,35 @@ El viernes 06/11 a las 17:55 se aplicó a producción un cambio en `infra/s3.tf`
 ### Decisión 1 · Qué bloquea y qué informa
 
 - Decisión:
+  - Checkov (job `iac`) bloquea los checks de exposición pública del bucket de comprobantes: CKV_AWS_53, CKV_AWS_54, CKV_AWS_55, CKV_AWS_56 y CKV_AWS_70. Los demás hallazgos se informan en el log del run y quedan para tratamiento posterior.
+  - Trivy (job `sca`) bloquea las vulnerabilidades de severidad HIGH y CRITICAL en las dependencias de `package-lock.json`. Los hallazgos actuales se corrigen actualizando o reemplazando las librerías (ver Decisión 2).
 - Dato del repositorio que la sustenta:
-- Alternativa descartada y por qué:
-- Posición en minoría:
+  - Checkov sobre `infra/` en el repositorio base: 48 controles evaluados, 20 aprobados y 28 fallidos. Los cinco que bloquean son exactamente los que causaron el incidente: `aws_s3_bucket_public_access_block.comprobantes` (CKV_AWS_53, 54, 55, 56) y `aws_s3_bucket_policy.conciliacion` con `Principal = "*"` (CKV_AWS_70), ambos en `infra/s3.tf` desde el commit `bd600fe`.
+  - Trivy sobre `package-lock.json` en el repositorio base: 3 vulnerabilidades HIGH y 0 CRITICAL. Son CVE-2024-29415 en `ip@2.0.1`, y CVE-2021-23337 y CVE-2026-4800 en `lodash@4.17.20`. Run: https://github.com/Kto-PAPS/INF384-lab5-base/actions/runs/43315459013
+- Alternativa descartada y por qué: bloquear los 28 hallazgos de Checkov. La descartamos porque la mayoría son controles de endurecimiento (cifrado KMS, X-Ray, DLQ, replicación) que no causaron el incidente. Bloquearlos todos dejaría el pipeline en rojo de forma permanente, y el equipo terminaría ignorando el gate o desactivándolo.
+- Posición en minoría: _Pendiente: objeción de Darwin Caceres (abogado del diablo)._
 
 ### Decisión 2 · La vulnerabilidad sin versión corregida
 
-- Decisión:
+- Decisión: reemplazar la librería `ip@2.0.1` por `net.BlockList`, que es nativo de Node.js, en `src/notificaciones.js`, función `validarUrlNotificacion`. Con esto la dependencia vulnerable desaparece de `package-lock.json` y no hace falta una excepción. Por separado, `lodash` se actualiza de 4.17.20 a 4.18.1, que corrige CVE-2021-23337 y CVE-2026-4800.
 - Dato del repositorio que la sustenta:
-- Alternativa descartada y por qué:
-- Posición en minoría:
+  - CVE-2024-29415, librería `ip`, versión 2.0.1, sin versión corregida.
+  - En el repositorio base se usa en `src/notificaciones.js`: `require('ip')` en la línea 2 y `ip.isPrivate(host)` en la línea 20, dentro de `validarUrlNotificacion` (línea 6). Es justamente la validación que impide que un comercio registre una URL de notificación interna (SSRF), así que la vulnerabilidad afecta un control de seguridad.
+  - El reemplazo está en `main` (PR #6, `fix/dependencias`), con 16 pruebas en verde en el job `unit`.
+- Alternativa descartada y por qué: mantener `ip@2.0.1` con una excepción en `.trivyignore`, o bloquear los despliegues hasta que exista una versión corregida. Descartamos la excepción porque no tiene fecha de salida (no hay parche anunciado) y deja abierto el riesgo de SSRF en la validación de URLs de comercios. Descartamos bloquear porque detendría todos los despliegues por tiempo indefinido, cuando el reemplazo con una API nativa es pequeño y se puede probar.
+- Riesgo residual reconocido: la validación revisa la IP literal de la URL, pero no resuelve DNS ni sigue redirecciones. Un dominio público que resuelva a una IP interna, o una redirección hacia una, no quedan cubiertos.
+- Posición en minoría: _Pendiente: objeción de Darwin Caceres (abogado del diablo)._
 
 ### Decisión 3 · La Function URL sin autenticación
 
-- Decisión:
-- Dato del repositorio que la sustenta:
-- Alternativa descartada y por qué:
-- Posición en minoría:
+- Decisión: abrir una excepción temporal sobre CKV_AWS_258 en lugar de cambiar la autenticación a `AWS_IAM` de inmediato. La app móvil consume la Function URL directamente, y el servicio de autenticación de usuarios está fuera de este repositorio. La excepción está escrita en el recurso con `#checkov:skip=CKV_AWS_258` y sus cuatro datos:
+  - Responsable: líder técnico.
+  - Vencimiento: 26/11/2026.
+  - Control compensatorio: `reserved_concurrent_executions = 10` en `aws_lambda_function.api`. Es limitado: acota el volumen de abuso, pero no impide el acceso indebido.
+  - Riesgo aceptado: quien invoque la URL directamente puede llamar a `/saldo`, `/historial` y `/transferir` sin autorización, porque el handler no valida tokens.
+- Dato del repositorio que la sustenta: CKV_AWS_258 ("Lambda function URLs AuthType is not None"), recurso `aws_lambda_function_url.api` en `infra/lambda.tf`, con `authorization_type = "NONE"` (líneas 28–38 en `main`).
+- Alternativa descartada y por qué: cambiar de inmediato a `authorization_type = "AWS_IAM"` sin adaptar el mecanismo de acceso de la app. La descartamos porque la app móvil dejaría de funcionar para todos los usuarios: necesitaría firmar las solicitudes con SigV4 y obtener credenciales (por ejemplo, con Cognito), y ese cambio no se puede hacer ni probar desde este repositorio antes del vencimiento.
+- Posición en minoría: _Pendiente: objeción de Darwin Caceres (abogado del diablo)._
 
 ## A3 · Dato nuevo
 
