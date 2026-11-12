@@ -25,3 +25,30 @@ test('registra la url del comercio', () => {
   assert.strictEqual(r.ok, true);
   assert.strictEqual(urlDeComercio('bodega-lucha'), 'https://bodega.example.com/aviso');
 });
+
+test('rechaza direcciones internas (CVE-2024-29415)', () => {
+  const internas = [
+    'https://127.0.0.1/pagos',
+    'https://10.0.0.1/pagos',
+    'https://192.168.1.1/pagos',
+    'https://[::1]/pagos',
+    'https://[::ffff:127.0.0.1]/pagos',
+    'https://[::ffff:a9fe:a9fe]/pagos',
+    'https://169.254.169.254/pagos',
+  ];
+  for (const url of internas) {
+    assert.strictEqual(validarUrlNotificacion(url).ok, false, url);
+  }
+});
+
+test('acepta urls publicas validas', () => {
+  const publicas = [
+    'https://comercio.example.com/pagos',
+    'https://8.8.8.8/pagos',
+    'https://1.1.1.1/pagos',
+    'https://[2001:4860:4860::8888]/pagos',
+  ];
+  for (const url of publicas) {
+    assert.strictEqual(validarUrlNotificacion(url).ok, true, url);
+  }
+});
