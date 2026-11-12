@@ -2,43 +2,98 @@
 
 ## Equipo
 
-Número de equipo:
+Número de equipo: 6
 
 | Código PUCP | Nombre | Rol | Usuario de GitHub |
 |---|---|---|---|
-| | | Moderador | |
-| | | Escriba | |
-| | | Abogado del diablo | |
-| | | Guardián del tiempo | |
-| | | Integrador | |
+| 20210888 | Piero Perezanelli | Moderador | Kto-PAPS |
+| 20221943 | Lucas Alvites | Escriba | lalvitesg |
+| 20206795 | Darwin Caceres | Abogado del diablo | Windar25 |
+| 20221377 | Santiago Yábar | Guardián del tiempo | sy11219 |
+| 20220867 | Mario Saico | Integrador | mSaico |
 
 ## A1 · Postmortem
 
 ### Resumen
 
+El viernes 06/11 a las 17:55 se aplicó a producción un cambio en `infra/s3.tf` para que el proveedor de conciliación pudiera leer los comprobantes. El cambio desactivó los cuatro controles del bloqueo de acceso público del bucket y agregó una bucket policy con `Principal = "*"` y `s3:GetObject`. Con eso, cualquier persona en Internet podía descargar cualquier comprobante, y como los nombres de archivo son números correlativos, bastaba cambiar el número al final de la URL para obtener otro. El bucket estuvo público 63 horas y 25 minutos, hasta que on-call activó el bloqueo desde la consola de AWS el lunes 09/11 a las 09:20. El código de `infra/` no se corrigió y sigue con la configuración pública.
+
 ### Impacto
+
+- Confidencialidad: los 41 300 comprobantes del bucket (origen, destino, monto y fecha de cada transferencia) quedaron expuestos públicamente durante 63 h 25 min (vie 06/11 17:55 a lun 09/11 09:20).
+- Alcance desconocido: el bucket no tenía registros de acceso, así que no se puede saber cuántos comprobantes se descargaron ni quién los descargó. Se debe asumir que todos pudieron ser leídos.
+- Exposición pública confirmada: al menos un comprobante de un cliente fue publicado en redes sociales por otro cliente.
+- Negocio: el proveedor de conciliación perdió el acceso el lun 09/11 a las 09:25 y sigue sin acceso, por lo que se acumula la penalidad diaria del contrato.
+- Deriva de configuración: el estado real del bucket (bloqueado a mano) no coincide con `infra/`. El próximo `terraform apply` volvería a dejarlo público.
 
 ### Línea de tiempo
 
 | Fecha y hora | Hecho |
 |---|---|
-| | |
+| Jue 05/11 · 15:10 | El área comercial informa que el proveedor de conciliación debe leer los comprobantes desde el viernes 06/11, con penalidad por cada día de retraso. |
+| Vie 06/11 · 09:30 | La tarea se asigna a un desarrollador backend que no había modificado `infra/` antes. La ingeniera de plataforma, única persona con experiencia en Terraform, está de vacaciones. |
+| Vie 06/11 · 16:20 | El desarrollador pide al proveedor el ID de su cuenta de AWS para darle acceso específico. No recibe respuesta. |
+| Vie 06/11 · 17:30 | El desarrollador pide revisión por chat. El líder técnico, en reunión, responde "dale, lo vemos el lunes". |
+| Vie 06/11 · 17:42 | Commit `bd600fe` directo a `main` (sin branch protection ni pull request). El pipeline `ci` solo corre pruebas unitarias y pasa. |
+| Vie 06/11 · 17:55 | `terraform apply` desde la laptop del desarrollador. **Inicio de la exposición.** El proveedor confirma que puede leer los comprobantes. |
+| Lun 09/11 · 08:15 | Un cliente publica en redes sociales el link de un comprobante ajeno, obtenido cambiando el número de la URL. **Detección (externa).** |
+| Lun 09/11 · 08:50 | Soporte escala a on-call por chat (35 min después de la publicación). |
+| Lun 09/11 · 09:20 | On-call activa el bloqueo de acceso público desde la consola de AWS. **Fin de la exposición (63 h 25 min).** `infra/` no se modifica. |
+| Lun 09/11 · 09:25 | El proveedor de conciliación pierde el acceso. |
+| Lun 09/11 · 11:00 | El equipo busca registros de acceso al bucket para medir la descarga. No existen. |
+| Mar 10/11 · 10:00 | Gerencia pide un informe del incidente y un plan para que no se repita. |
 
 ### Causas
 
+1. **Pipeline: `ci` no analiza la infraestructura.** El workflow `.github/workflows/ci.yml` solo ejecuta pruebas unitarias. No corre ningún escáner de IaC sobre `infra/`. Checkov, sobre el mismo commit, reporta CKV_AWS_53, 54, 55, 56 y CKV_AWS_70 en el bucket: el cambio habría quedado detenido antes de llegar a `main`.
+2. **Proceso: no hay revisión obligatoria antes de integrar.** `main` no tiene branch protection, así que se pudo hacer un commit directo sin pull request. La aprobación fue informal, por chat y diferida ("lo vemos el lunes"), y el cambio se aplicó igual porque nada en el proceso exigía la revisión antes de desplegar.
+3. **Plataforma: el despliegue de infraestructura es manual y desde laptops.** `terraform apply` lo ejecuta quien hace el cambio, desde su máquina y con sus credenciales, sin pipeline de despliegue ni `plan` revisado. Nada separa "el código está en `main`" de "el cambio está en producción", ni registra quién aplicó qué.
+4. **Plataforma: no hay guardas a nivel de cuenta ni monitoreo de configuración.** No existe S3 Block Public Access a nivel de cuenta ni una alerta ante buckets públicos (p. ej. AWS Config o Access Analyzer). Por eso la exposición se detectó por redes sociales y no por un sistema, tras más de 60 horas.
+5. **Plataforma: falta de trazabilidad y diseño del dato.** El bucket no tiene access logging (CKV_AWS_18), así que no se puede medir el impacto. Los nombres correlativos de los comprobantes permiten enumerarlos con solo cambiar un número.
+6. **Proceso / organización: concentración de conocimiento y presión de plazo.** Solo una persona del equipo conoce Terraform y estaba de vacaciones sin reemplazo designado. El plazo contractual con penalidad diaria llegó con menos de un día de aviso, y no había un camino definido para dar acceso entre cuentas a un tercero (el ID de la cuenta 111122223333 y el rol `conciliacion-lectura` no estaban disponibles), así que la solución disponible fue abrir el bucket con `Principal = "*"`.
+
 ### Qué funcionó y qué no funcionó
+
+**Funcionó**
+
+- Una vez escalado, on-call contuvo la exposición en 30 minutos gracias a su acceso a la consola de AWS.
+- Soporte identificó el problema y lo escaló por el canal definido.
+- El intento inicial de pedir el ID de la cuenta del proveedor fue el enfoque correcto (acceso por cuenta y rol, no público).
+
+**No funcionó**
+
+- La detección dependió de un cliente en redes sociales, no de un control propio.
+- La revisión del cambio se postergó y el sistema permitió desplegarlo sin ella.
+- El pipeline no tenía ningún control sobre `infra/`.
+- La contención se hizo en la consola y no en el código: hay deriva entre `infra/` y producción, y el próximo `apply` reabriría el bucket.
+- La contención cortó también el acceso legítimo del proveedor, sin plan para restaurarlo de forma segura.
+- Sin registros de acceso no se puede dimensionar la fuga ni notificar con precisión a los afectados.
 
 ### Acciones
 
 | Acción | Rol responsable | Fecha límite |
 |---|---|---|
-| | | |
+| Corregiremos `infra/s3.tf`: activaremos los cuatro controles del bloqueo de acceso público y eliminaremos la policy con `Principal = "*"`, para que el código coincida con lo que on-call aplicó a mano. | Desarrolladores backend (con revisión del líder técnico) | 12/11/2026 |
+| Agregaremos el job `iac` con Checkov en `ci.yml` que bloquea los checks de exposición pública del bucket (CKV_AWS_53, 54, 55, 56, 70). | Desarrolladores backend | 12/11/2026 |
+| Agregaremos el job `sca` con Trivy sobre `package-lock.json`. | Desarrolladores backend | 12/11/2026 |
+| Activaremos branch protection en `main`: pull request obligatorio, una aprobación y los jobs `unit`, `iac` y `sca` como checks requeridos. | Líder técnico | 13/11/2026 |
+| Restableceremos el acceso del proveedor con una bucket policy limitada a `arn:aws:iam::111122223333:role/conciliacion-lectura` y solo `s3:GetObject`. | Ingeniera de plataforma | 16/11/2026 |
+| Habilitaremos access logging del bucket de comprobantes y S3 Block Public Access a nivel de cuenta. | Ingeniera de plataforma | 16/11/2026 |
+| Configuraremos una alerta (AWS Config / IAM Access Analyzer) que avise a on-call si un bucket queda público. | Ingeniera de plataforma | 20/11/2026 |
+| Moveremos `terraform plan` y `terraform apply` a un pipeline con aprobación, y retiraremos las credenciales de despliegue de las laptops. | Ingeniera de plataforma | 30/11/2026 |
+| Cambiaremos el nombre de los comprobantes de correlativo a un identificador no predecible (UUID) y serviremos las descargas con URLs prefirmadas de corta duración. | Desarrolladores backend | 30/11/2026 |
+| Capacitaremos a los desarrolladores backend en Terraform y definiremos un reemplazo para la ingeniera de plataforma en sus ausencias. | Líder técnico | 30/11/2026 |
+| Acordaremos con el área comercial que los pedidos con plazo contractual que toquen infraestructura pasen primero por el líder técnico, con al menos 3 días hábiles de aviso. | Líder técnico | 20/11/2026 |
 
 ### Datos del repositorio
 
-- SHA del commit que introdujo el cambio:
-- Fecha y hora de ese commit:
-- Checks de Checkov que fallan sobre el bucket de comprobantes:
+- SHA del commit que introdujo el cambio: `bd600fe3307d5aa35bb3acbff8df91e0e02fcf35`
+- Fecha y hora de ese commit: 06/11/2026, 17:42 (Hora Perú)
+- Checks de Checkov que fallan sobre el bucket de comprobantes: 48 controles evaluados, 20 aprobados y 28 fallidos. Checks que fallan sobre el bloqueo público del bucket en infra/s3.tf, líneas 5–12:
+  - CKV_AWS_53
+  - CKV_AWS_54
+  - CKV_AWS_55
+  - CKV_AWS_56
 
 ## A2 · Decisiones
 
@@ -80,3 +135,5 @@ Número de equipo:
 ## Declaración de uso de IA
 
 Herramientas usadas y para qué se usó cada una:
+- Se registra uso de IA: Claude Opus 5.5 Medium para ayudar en la detección de errores y redacción de este documento.
+- Uso de ChatGPT para apoyo en l detección y análisis postmortem.
