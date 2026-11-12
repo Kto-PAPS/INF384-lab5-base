@@ -25,6 +25,12 @@ resource "aws_lambda_function" "api" {
 }
 
 resource "aws_lambda_function_url" "api" {
+  # Excepcion CKV_AWS_258 - Decision 3 de DECISIONES.md
+  # Responsable: Lider tecnico
+  # Vencimiento: 11/12/2026 (dd/mm/aaaa)
+  # Control compensatorio: validar en el handler el token del servicio de autenticacion antes del vencimiento
+  # Riesgo aceptado: sin autenticacion en la URL, cualquiera con el enlace puede invocar la API
+  #checkov:skip=CKV_AWS_258:La app movil consume la URL directamente; excepcion hasta 11/12/2026
   function_name      = aws_lambda_function.api.function_name
   authorization_type = "NONE"
 }
