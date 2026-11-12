@@ -152,9 +152,14 @@ Dato recibido el 12/11 a las 16:40: el proveedor de conciliación exige acceso h
 
 | Evidencia | Link |
 |---|---|
-| Run fallido: el gate detiene el bucket público | |
-| Run en verde en `main` después de las correcciones | |
-| Pull requests del equipo | |
+| Run fallido: el gate detiene el bucket público | Checkov (job `iac`): <https://github.com/Kto-PAPS/INF384-lab5-base/actions/runs/43310141946> |
+| Run fallido: Trivy detiene las dependencias vulnerables | Trivy (job `sca`): <https://github.com/Kto-PAPS/INF384-lab5-base/actions/runs/43315459013> |
+| Run en verde en `main` después de las correcciones | _Pendiente: run definitivo de `main` tras fusionar el PR #5._ |
+| Pull requests del equipo | <https://github.com/Kto-PAPS/INF384-lab5-base/pulls?q=is%3Apr> |
+
+### Observación pendiente
+
+SonarQube Cloud reportó **Security Rating C** en el código nuevo del PR #5. Queda registrado como observación pendiente, a revisar después del laboratorio: SonarQube no forma parte de los tres jobs obligatorios del pipeline (`unit`, `iac` y `sca`) y no cambia la política de bloqueo de la Decisión 1.
 
 ## Declaración de uso de IA
 
