@@ -23,7 +23,7 @@ El viernes 06/11 a las 17:55 se aplicó a producción un cambio en `infra/s3.tf`
 - Confidencialidad: los 41 300 comprobantes del bucket (origen, destino, monto y fecha de cada transferencia) quedaron expuestos públicamente durante 63 h 25 min (vie 06/11 17:55 a lun 09/11 09:20).
 - Alcance desconocido: el bucket no tenía registros de acceso, así que no se puede saber cuántos comprobantes se descargaron ni quién los descargó. Se debe asumir que todos pudieron ser leídos.
 - Exposición pública confirmada: al menos un comprobante de un cliente fue publicado en redes sociales por otro cliente.
-- Negocio: el proveedor de conciliación perdió el acceso el lun 09/11 a las 09:25 y sigue sin acceso, por lo que se acumula la penalidad diaria del contrato.
+- Negocio: el proveedor de conciliación perdió el acceso el lun 09/11 a las 09:25 y sigue sin acceso. El proveedor cobra S/ 15 000 por cada día sin acceso y exige recuperarlo hoy (12/11).
 - Deriva de configuración: el estado real del bucket (bloqueado a mano) no coincide con `infra/`. El próximo `terraform apply` volvería a dejarlo público.
 
 ### Línea de tiempo
@@ -42,6 +42,7 @@ El viernes 06/11 a las 17:55 se aplicó a producción un cambio en `infra/s3.tf`
 | Lun 09/11 · 09:25 | El proveedor de conciliación pierde el acceso. |
 | Lun 09/11 · 11:00 | El equipo busca registros de acceso al bucket para medir la descarga. No existen. |
 | Mar 10/11 · 10:00 | Gerencia pide un informe del incidente y un plan para que no se repita. |
+| Jue 12/11 · 16:40 | El proveedor exige acceso hoy y cobra S/ 15 000 por día sin acceso. Gerencia pide el nombre de quien hizo el cambio (ver A3). |
 
 ### Causas
 
@@ -66,7 +67,7 @@ El viernes 06/11 a las 17:55 se aplicó a producción un cambio en `infra/s3.tf`
 - La revisión del cambio se postergó y el sistema permitió desplegarlo sin ella.
 - El pipeline no tenía ningún control sobre `infra/`.
 - La contención se hizo en la consola y no en el código: hay deriva entre `infra/` y producción, y el próximo `apply` reabriría el bucket.
-- La contención cortó también el acceso legítimo del proveedor, sin plan para restaurarlo de forma segura.
+- La contención cortó también el acceso legítimo del proveedor, sin plan para restaurarlo de forma segura. No había un mecanismo seguro de acceso para terceros ni un procedimiento de recuperación que considerara a la vez seguridad y continuidad.
 - Sin registros de acceso no se puede dimensionar la fuga ni notificar con precisión a los afectados.
 
 ### Acciones
@@ -77,7 +78,7 @@ El viernes 06/11 a las 17:55 se aplicó a producción un cambio en `infra/s3.tf`
 | Agregaremos el job `iac` con Checkov en `ci.yml` que bloquea los checks de exposición pública del bucket (CKV_AWS_53, 54, 55, 56, 70). | Desarrolladores backend | 12/11/2026 |
 | Agregaremos el job `sca` con Trivy sobre `package-lock.json`. | Desarrolladores backend | 12/11/2026 |
 | Activaremos branch protection en `main`: pull request obligatorio, una aprobación y los jobs `unit`, `iac` y `sca` como checks requeridos. | Líder técnico | 13/11/2026 |
-| Restableceremos el acceso del proveedor con una bucket policy limitada a `arn:aws:iam::111122223333:role/conciliacion-lectura` y solo `s3:GetObject`. | Ingeniera de plataforma | 16/11/2026 |
+| Restableceremos el acceso del proveedor con una bucket policy limitada a `arn:aws:iam::111122223333:role/conciliacion-lectura` y solo `s3:GetObject`, sin desactivar el bloqueo de acceso público. | Líder técnico (la ingeniera de plataforma vuelve recién el 14/11) | 12/11/2026 |
 | Habilitaremos access logging del bucket de comprobantes y S3 Block Public Access a nivel de cuenta. | Ingeniera de plataforma | 16/11/2026 |
 | Configuraremos una alerta (AWS Config / IAM Access Analyzer) que avise a on-call si un bucket queda público. | Ingeniera de plataforma | 20/11/2026 |
 | Moveremos `terraform plan` y `terraform apply` a un pipeline con aprobación, y retiraremos las credenciales de despliegue de las laptops. | Ingeniera de plataforma | 30/11/2026 |
@@ -120,9 +121,20 @@ El viernes 06/11 a las 17:55 se aplicó a producción un cambio en `infra/s3.tf`
 
 ## A3 · Dato nuevo
 
+Dato recibido el 12/11 a las 16:40: el proveedor de conciliación exige acceso hoy y cobra S/ 15 000 por cada día sin acceso. Gerencia pide el nombre de quien hizo el cambio para sancionarlo.
+
 - Qué cambia en el postmortem:
+  - Se incorpora el impacto económico y operativo. El proveedor exige recuperar el acceso a los comprobantes hoy y cobra S/ 15 000 por cada día sin acceso. Desde la pérdida de acceso (lun 09/11 · 09:25) ya van varios días de penalidad acumulada.
+  - La contención del 09/11 eliminó la exposición pública, pero interrumpió el servicio de conciliación. Esto muestra que el equipo no tenía un mecanismo seguro de acceso para terceros ni un procedimiento de recuperación que considerara a la vez seguridad y continuidad operativa. Se agregó este punto en "Impacto", en "No funcionó" y en la línea de tiempo.
+  - La acción de restablecer el acceso restringido del proveedor pasa de prioridad media a inmediata: su fecha límite cambia del 16/11 al 12/11.
 - Qué cambia en las decisiones:
+  - Se mantiene la decisión de bloquear el acceso público a S3: los checks CKV_AWS_53, 54, 55, 56 y 70 siguen bloqueando en el job `iac`. No se acepta volver a usar `Principal = "*"` ni abrir una excepción sobre esos checks, aunque haya presión económica.
+  - Se prioriza configurar `s3:GetObject` solo para el rol `arn:aws:iam::111122223333:role/conciliacion-lectura`, verificar que esa política sea compatible con el bloqueo de acceso público (una policy con principal específico no es pública, así que pasa CKV_AWS_70) y coordinar una restauración controlada del servicio.
+  - La urgencia aumenta la prioridad de esta corrección, pero no justifica desactivar los controles de seguridad.
 - Respuesta del equipo al pedido recibido:
+  - No entregamos un nombre para sancionar. El historial de Git permite identificar qué commit introdujo el cambio (`bd600fe`), pero el postmortem no atribuye la responsabilidad a una persona, y ese dato no basta para una sanción. La exposición fue posible por varias condiciones del sistema: no había revisión obligatoria, el CI no tenía controles sobre `infra/`, los despliegues eran manuales y no había monitoreo. Cualquier persona en el mismo rol y con las mismas condiciones podía haber llegado al mismo resultado, y sancionar a una persona no elimina ninguna de esas condiciones.
+  - Entregamos a gerencia los hechos verificables (SHA, fechas, checks de Checkov, línea de tiempo) y el plan de acciones con roles responsables y fechas. La prioridad inmediata es restaurar hoy el acceso restringido del proveedor, sin reabrir el bucket al público.
+  - Si gerencia considera necesario evaluar responsabilidades individuales, debe hacerse en un procedimiento separado del postmortem, considerando las circunstancias y la evidencia disponible.
 
 ## Parte B · Evidencia
 
