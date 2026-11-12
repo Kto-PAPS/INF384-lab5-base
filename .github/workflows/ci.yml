@@ -38,4 +38,19 @@ jobs:
         run: |
           checkov -d infra --framework terraform \
             --soft-fail \
-            --hard-fail-on CKV_AWS_53,CKV_AWS_54,CKV_AWS_55,CKV_AWS_56
+            --hard-fail-on CKV_AWS_53,CKV_AWS_54,CKV_AWS_55,CKV_AWS_56,CKV_AWS_70
+  sca:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Analizar dependencias con Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'vuln'
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          ignore-unfixed: 'false'
